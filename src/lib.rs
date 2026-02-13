@@ -379,3 +379,8 @@ mod tests {
         assert_eq!(rand.last_fulfilled_request_id, [0u8; 32]);
     }
 }
+pub mod features {
+    pub mod solana_word_game;
+}
+
+pub mod types;
