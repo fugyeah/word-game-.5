@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "word_game_solana"
-path = "src/lib.rs"
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
-thiserror = "1.0"
+anchor-lang = "0.30.1"
 
-[dev-dependencies]
-rand = "0.8"
+[features]
+default = []
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
