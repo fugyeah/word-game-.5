@@ -22,7 +22,7 @@ export const WalletControls = (): JSX.Element => {
   };
 
   return (
-    <div className="mc-card mc-grid">
+    <div className="mc-card mc-grid mc-spray">
       <h3 className="mc-title">Wallet</h3>
       {publicKey ? <span className="mc-subtle">Connected: {publicKey} ({role})</span> : <span className="mc-subtle">Disconnected</span>}
       <input value={candidate} onChange={(event) => setCandidate(event.target.value)} className="mc-button" />

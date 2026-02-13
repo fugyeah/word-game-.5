@@ -5,12 +5,14 @@ export default async function HomePage(): Promise<JSX.Element> {
   const initial = await fetchLobbiesAction({ limit: 25 });
 
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-6">
-      <h1 className="text-3xl font-bold">Solana Street Craps</h1>
-      <p className="text-slate-300">
+    <main className="mc-grid">
+      <header className="mc-card mc-spray mc-neon-pulse">
+        <h1 className="mc-heading">Solana Street Craps</h1>
+        <p className="mc-tagline">
         Lobby discovery runs directly against Solana RPC using account scans and subscriptions, then optionally merges
         additive metrics from the indexer.
-      </p>
+        </p>
+      </header>
       <LobbyListClient initial={initial} />
     </main>
   );

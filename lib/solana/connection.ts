@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { AppSnapshot } from "@/types/word-game";
 
 interface JsonRpcRequest {
@@ -13,15 +14,59 @@ interface FetchResult {
   json: () => Promise<unknown>;
 }
 
+const lobbySchema = z.object({
+  id: z.string().min(1),
+  host: z.string().min(1),
+  challenger: z.string().min(1),
+  status: z.string().min(1),
+  createdAt: z.number(),
+  wagerLamports: z.string().min(1),
+});
+
+const countdownSchema = z.object({
+  claimExpiresAt: z.number(),
+  cancelExpiresAt: z.number(),
+  forfeitExpiresAt: z.number(),
+  rerollAvailableAt: z.number(),
+});
+
+const gameSchema = z.object({
+  id: z.string().min(1),
+  lobbyId: z.string().min(1),
+  host: z.string().min(1),
+  challenger: z.string().min(1),
+  turnOwner: z.string().min(1),
+  hostRoll: z.number().nullable(),
+  challengerRoll: z.number().nullable(),
+  winner: z.string().nullable(),
+  status: z.string().min(1),
+  countdown: countdownSchema,
+  updatedAt: z.number(),
+});
+
+const stashSchema = z.object({
+  mint: z.string().min(1),
+  amount: z.string().min(1),
+  symbol: z.string().min(1),
+  updatedAt: z.number(),
+});
+
+const snapshotSchema = z.object({
+  lobbies: z.array(lobbySchema),
+  currentGame: gameSchema.nullable(),
+  stash: z.array(stashSchema),
+  slot: z.number(),
+  source: z.enum(["rpc", "indexer"]),
+  degraded: z.boolean(),
+  warning: z.string().nullable(),
+});
+
 const parseSnapshot = (payload: unknown): AppSnapshot => {
-  if (!payload || typeof payload !== "object") {
-    throw new Error("Invalid snapshot payload");
+  const parsed = snapshotSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error(`Invalid snapshot payload: ${parsed.error.issues.map((issue) => issue.message).join(", ")}`);
   }
-  const candidate = payload as Record<string, unknown>;
-  if (!Array.isArray(candidate.lobbies) || !Array.isArray(candidate.stash)) {
-    throw new Error("Snapshot missing collections");
-  }
-  return candidate as AppSnapshot;
+  return parsed.data as AppSnapshot;
 };
 
 const randomLatency = async (): Promise<void> => {

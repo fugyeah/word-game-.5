@@ -31,7 +31,7 @@ export const CountdownTimer = ({ label, deadline }: CountdownTimerProps): JSX.El
   }, [deadline, now]);
 
   return (
-    <div className="mc-card">
+    <div className="mc-card mc-spray">
       <div className="mc-subtle">{label}</div>
       <strong>{remaining}</strong>
     </div>
