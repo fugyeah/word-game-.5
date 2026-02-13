@@ -22,7 +22,7 @@ export const ActionPanel = ({ matchId, wallet, role, countdown }: ActionPanelPro
   };
 
   return (
-    <div className="mc-card mc-grid">
+    <div className="mc-card mc-grid mc-spray">
       <h3 className="mc-title">Match Actions</h3>
       <div className="mc-grid mc-grid-2">
         <button className="mc-button" disabled={busy} onClick={() => run(() => executeClaim(matchId, wallet, role, countdown))}>

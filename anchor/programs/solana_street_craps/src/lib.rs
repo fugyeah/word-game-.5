@@ -181,9 +181,7 @@ pub mod solana_street_craps {
         require!(game.state == GameState::Rolling, CrapsError::InvalidState);
         require_keys_eq!(game.pending_roll_request, roll_request, CrapsError::InvalidRollRequest);
 
-        let die_one = (random_word % 6) + 1;
-        let die_two = ((random_word / 6) % 6) + 1;
-        let roll = die_one + die_two;
+        let roll = sample_uniform_sum_2_to_12(random_word)?;
 
         match game.point {
             0 => {
@@ -215,9 +213,11 @@ pub mod solana_street_craps {
     pub fn cancel_game(ctx: Context<CancelGame>) -> Result<()> {
         let game = &mut ctx.accounts.game;
         require_keys_eq!(ctx.accounts.shooter.key(), game.shooter, CrapsError::Unauthorized);
-        require!(game.state == GameState::Open || game.state == GameState::ReadyToRoll, CrapsError::InvalidState);
+        let clock = Clock::get()?;
+        require!(game.state == GameState::Open, CrapsError::InvalidState);
+        require!(clock.slot > game.last_action_slot.saturating_add(ctx.accounts.config.join_timeout_slots), CrapsError::JoinWindowActive);
         game.state = GameState::Canceled;
-        game.last_action_slot = Clock::get()?.slot;
+        game.last_action_slot = clock.slot;
         Ok(())
     }
 
@@ -246,10 +246,7 @@ pub mod solana_street_craps {
         let clock = Clock::get()?;
         let config = &ctx.accounts.config;
         let game = &mut ctx.accounts.game;
-        require!(
-            ctx.accounts.caller.key() == game.shooter || game.find_fader_index(&ctx.accounts.caller.key()).is_some(),
-            CrapsError::Unauthorized
-        );
+        require!(game.find_fader_index(&ctx.accounts.caller.key()).is_some(), CrapsError::Unauthorized);
         require!(game.state == GameState::ReadyToRoll || game.state == GameState::PointEstablished, CrapsError::InvalidState);
         require!(clock.slot > game.last_action_slot.saturating_add(config.roll_timeout_slots), CrapsError::RollWindowActive);
         settle_game(game, config, false)?;
@@ -309,19 +306,23 @@ pub mod solana_street_craps {
 }
 
 fn settle_game(game: &mut Account<Game>, config: &Account<Config>, shooter_wins: bool) -> Result<()> {
-    let tax = game
-        .total_pot
-        .checked_mul(config.tax_bps as u64)
-        .ok_or(CrapsError::MathOverflow)?
-        .checked_div(BPS_DENOMINATOR)
-        .ok_or(CrapsError::MathOverflow)?;
+    let tax = if shooter_wins {
+        0
+    } else {
+        game
+            .total_pot
+            .checked_mul(config.tax_bps as u64)
+            .ok_or(CrapsError::MathOverflow)?
+            .checked_div(BPS_DENOMINATOR)
+            .ok_or(CrapsError::MathOverflow)?
+    };
 
     game.tax_amount = tax;
     game.winner_is_shooter = shooter_wins;
     game.state = GameState::Settled;
 
     if shooter_wins {
-        game.shooter_payout = game.total_pot.checked_sub(tax).ok_or(CrapsError::MathOverflow)?;
+        game.shooter_payout = game.total_pot;
         for i in 0..game.fader_count as usize {
             game.fader_payouts[i] = 0;
         }
@@ -356,19 +357,26 @@ fn settle_game(game: &mut Account<Game>, config: &Account<Config>, shooter_wins:
         allocated = allocated.checked_add(payout).ok_or(CrapsError::MathOverflow)?;
     }
 
-    let remainder = distributable.checked_sub(allocated).ok_or(CrapsError::MathOverflow)?;
-    if game.fader_count > 0 {
-        game.fader_payouts[0] = game.fader_payouts[0].checked_add(remainder).ok_or(CrapsError::MathOverflow)?;
-    }
+    let _remainder = distributable.checked_sub(allocated).ok_or(CrapsError::MathOverflow)?;
     game.shooter_payout = 0;
     Ok(())
 }
 
-fn transfer_lamports(
-    from: &AccountInfo,
-    to: &AccountInfo,
+
+fn sample_uniform_sum_2_to_12(random_word: u64) -> Result<u64> {
+    let upper = u64::MAX - (u64::MAX % 11);
+    if random_word >= upper {
+        return err!(CrapsError::RandomnessRejected);
+    }
+    let value = random_word % 11;
+    Ok(value + 2)
+}
+
+fn transfer_lamports<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
     amount: u64,
-    system_program: &AccountInfo,
+    system_program: &AccountInfo<'a>,
 ) -> Result<()> {
     invoke(
         &system_instruction::transfer(from.key, to.key, amount),
@@ -560,14 +568,12 @@ pub struct CloseGame<'info> {
     pub config: Account<'info, Config>,
     #[account(
         mut,
-        close = treasury,
+        close = shooter,
         seeds = [GAME_SEED, config.key().as_ref(), &game.game_id.to_le_bytes()],
         bump = game.bump,
         has_one = config
     )]
     pub game: Account<'info, Game>,
-    #[account(mut, address = config.treasury)]
-    pub treasury: UncheckedAccount<'info>,
 }
 
 #[account]
@@ -657,6 +663,8 @@ pub enum CrapsError {
     AlreadyClosed,
     #[msg("Join timeout elapsed")]
     JoinTimeout,
+    #[msg("Join window still active")]
+    JoinWindowActive,
     #[msg("Roll request timeout elapsed")]
     RollRequestTimeout,
     #[msg("Roll window still active")]
@@ -677,4 +685,6 @@ pub enum CrapsError {
     InvalidRollRequest,
     #[msg("Insufficient vault balance")]
     InsufficientVaultBalance,
+    #[msg("Randomness candidate rejected; request retry")]
+    RandomnessRejected,
 }

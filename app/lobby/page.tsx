@@ -15,12 +15,12 @@ const LobbyPage = async ({ searchParams }: LobbyPageProps): Promise<JSX.Element>
 
   return (
     <section className="mc-grid">
-      <h1>Lobby</h1>
+      <h1 className="mc-heading">The Sidewalk Lobby</h1>
       <WalletControls />
       {!snapshot.ok && <div className="mc-banner">{sanitizeText(snapshot.error?.message ?? "Failed to load lobby")}</div>}
       <div className="mc-grid mc-grid-2">
         {(snapshot.data?.lobbies ?? []).map((lobby) => (
-          <article key={lobby.id} className="mc-card mc-grid">
+          <article key={lobby.id} className="mc-card mc-grid mc-spray">
             <h3 className="mc-title">{sanitizeText(lobby.id)}</h3>
             <span className="mc-subtle">Host: {sanitizeText(lobby.host)}</span>
             <span className="mc-subtle">Challenger: {sanitizeText(lobby.challenger ?? "Waiting")}</span>

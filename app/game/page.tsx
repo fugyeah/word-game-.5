@@ -3,7 +3,7 @@ import { WalletControls } from "@/features/game/components/wallet-controls";
 
 const GamePage = (): JSX.Element => (
   <section className="mc-grid">
-    <h1>Game Room</h1>
+    <h1 className="mc-heading">Back Alley Table</h1>
     <WalletControls />
     <GameDashboard />
   </section>

@@ -259,9 +259,14 @@ class StreetCrapsEngine {
   }
 }
 
+
+const setNodeEnv = (value: string): void => {
+  Object.assign(process.env, { NODE_ENV: value });
+};
+
 const withEngine = (seed: number = 12345): StreetCrapsEngine => {
   process.env.ENABLE_TEST_ONLY_RANDOMNESS = "1";
-  process.env.NODE_ENV = "test";
+  setNodeEnv("test");
   const rng = createDeterministicRng(seed);
   return new StreetCrapsEngine(rng);
 };
@@ -470,7 +475,7 @@ describe("solana street craps deterministic flow", () => {
 
   it("deterministic RNG sequence is reproducible", () => {
     process.env.ENABLE_TEST_ONLY_RANDOMNESS = "1";
-    process.env.NODE_ENV = "test";
+    setNodeEnv("test");
     const r1 = createDeterministicRng(99);
     const r2 = createDeterministicRng(99);
 
@@ -482,14 +487,14 @@ describe("solana street craps deterministic flow", () => {
 
   it("deterministic RNG is disabled without feature flag", () => {
     delete process.env.ENABLE_TEST_ONLY_RANDOMNESS;
-    process.env.NODE_ENV = "test";
+    setNodeEnv("test");
 
     assert.throws(() => createDeterministicRng(1), /required/);
   });
 
   it("deterministic RNG is disabled in production", () => {
     process.env.ENABLE_TEST_ONLY_RANDOMNESS = "1";
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
 
     assert.throws(() => createDeterministicRng(1), /disabled for production/);
   });
