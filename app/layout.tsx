@@ -1,19 +1,18 @@
 import "./midnight-concrete.css";
 import { WalletProvider } from "@/lib/solana/wallet";
-
-export const metadata = {
-  title: "Word Game 0.5",
-  description: "Realtime Solana word game control panel",
+export default RootLayout;
+import type React from 'react';
+import '@/styles/globals.css';
+import type { Metadata } from 'next';
+export const metadata: Metadata = {
+  title: 'Solana Street Craps',
+  description: 'Devnet-first craps lobbies with RPC-native listing and optional indexer enrichment.'
 };
 
-const RootLayout = ({ children }: { children: React.ReactNode }): JSX.Element => (
-  <html lang="en">
-    <body className="midnight-body">
-      <WalletProvider>
-        <main className="shell">{children}</main>
-      </WalletProvider>
-    </body>
-  </html>
-);
-
-export default RootLayout;
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>): JSX.Element {
+  return (
+    <html lang="en">
+      <body className="min-h-screen bg-slate-950 text-slate-100">{children}</body>
+    </html>
+  );
+}
