@@ -1,0 +1,9 @@
+[workspace]
+members = ["programs/solana_street_craps"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+anchor-lang = "0.30.1"
