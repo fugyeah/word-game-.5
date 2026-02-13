@@ -1,0 +1,13 @@
+[features]
+seeds = false
+skip-lint = false
+
+[programs.devnet]
+solana_street_craps = "11111111111111111111111111111111"
+
+[provider]
+cluster = "${NEXT_PUBLIC_SOLANA_CLUSTER:-devnet}"
+wallet = "~/.config/solana/id.json"
+
+[scripts]
+test = "cargo test --manifest-path Cargo.toml"
