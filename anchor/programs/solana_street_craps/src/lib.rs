@@ -7,6 +7,8 @@ const CONFIG_SEED: &[u8] = b"config";
 const GAME_SEED: &[u8] = b"game";
 const MAX_FADERS: usize = 16;
 const BPS_DENOMINATOR: u64 = 10_000;
+const MAX_TAX_BPS: u16 = 2_500;
+const CRAPS_OUTCOME_COUNT: u64 = 11;
 
 #[program]
 pub mod solana_street_craps {
@@ -18,11 +20,13 @@ pub mod solana_street_craps {
         join_timeout_slots: u64,
         roll_timeout_slots: u64,
         max_faders: u8,
+        min_fader_stake: u64,
     ) -> Result<()> {
-        require!(tax_bps <= 2_500, CrapsError::InvalidTaxBps);
+        require!(tax_bps <= MAX_TAX_BPS, CrapsError::InvalidTaxBps);
         require!(join_timeout_slots > 0, CrapsError::InvalidTimeout);
         require!(roll_timeout_slots > 0, CrapsError::InvalidTimeout);
         require!(max_faders > 0 && (max_faders as usize) <= MAX_FADERS, CrapsError::InvalidMaxFaders);
+        require!(min_fader_stake > 0, CrapsError::InvalidStake);
 
         let config = &mut ctx.accounts.config;
         config.bump = ctx.bumps.config;
@@ -34,6 +38,7 @@ pub mod solana_street_craps {
         config.join_timeout_slots = join_timeout_slots;
         config.roll_timeout_slots = roll_timeout_slots;
         config.max_faders = max_faders;
+        config.min_fader_stake = min_fader_stake;
         config.frozen = false;
         Ok(())
     }
@@ -44,6 +49,7 @@ pub mod solana_street_craps {
         join_timeout_slots: u64,
         roll_timeout_slots: u64,
         max_faders: u8,
+        min_fader_stake: u64,
         randomness_program: Pubkey,
         randomness_authority: Pubkey,
         treasury: Pubkey,
@@ -51,15 +57,17 @@ pub mod solana_street_craps {
         let config = &mut ctx.accounts.config;
         require!(!config.frozen, CrapsError::ConfigFrozen);
         require_keys_eq!(ctx.accounts.authority.key(), config.authority, CrapsError::Unauthorized);
-        require!(tax_bps <= 2_500, CrapsError::InvalidTaxBps);
+        require!(tax_bps <= MAX_TAX_BPS, CrapsError::InvalidTaxBps);
         require!(join_timeout_slots > 0, CrapsError::InvalidTimeout);
         require!(roll_timeout_slots > 0, CrapsError::InvalidTimeout);
         require!(max_faders > 0 && (max_faders as usize) <= MAX_FADERS, CrapsError::InvalidMaxFaders);
+        require!(min_fader_stake > 0, CrapsError::InvalidStake);
 
         config.tax_bps = tax_bps;
         config.join_timeout_slots = join_timeout_slots;
         config.roll_timeout_slots = roll_timeout_slots;
         config.max_faders = max_faders;
+        config.min_fader_stake = min_fader_stake;
         config.randomness_program = randomness_program;
         config.randomness_authority = randomness_authority;
         config.treasury = treasury;
@@ -101,6 +109,8 @@ pub mod solana_street_craps {
         game.fader_claimed = [false; MAX_FADERS];
         game.shooter_payout = 0;
         game.shooter_claimed = false;
+        game.treasury_payout = 0;
+        game.treasury_claimed = false;
 
         transfer_lamports(
             &ctx.accounts.shooter.to_account_info(),
@@ -120,6 +130,7 @@ pub mod solana_street_craps {
         require!(game.state == GameState::Open || game.state == GameState::ReadyToRoll, CrapsError::InvalidState);
         require!(game.shooter != ctx.accounts.fader.key(), CrapsError::ShooterCannotFade);
         require!(fader_stake > 0, CrapsError::InvalidStake);
+        require!(fader_stake >= config.min_fader_stake, CrapsError::StakeTooSmall);
         require!((game.fader_count as usize) < config.max_faders as usize, CrapsError::TooManyFaders);
         require!(clock.slot <= game.last_action_slot.saturating_add(config.join_timeout_slots), CrapsError::JoinTimeout);
 
@@ -247,8 +258,26 @@ pub mod solana_street_craps {
         let config = &ctx.accounts.config;
         let game = &mut ctx.accounts.game;
         require!(game.find_fader_index(&ctx.accounts.caller.key()).is_some(), CrapsError::Unauthorized);
-        require!(game.state == GameState::ReadyToRoll || game.state == GameState::PointEstablished, CrapsError::InvalidState);
-        require!(clock.slot > game.last_action_slot.saturating_add(config.roll_timeout_slots), CrapsError::RollWindowActive);
+        let timeout_window = if game.state == GameState::Rolling {
+            config
+                .roll_timeout_slots
+                .checked_mul(2)
+                .ok_or(CrapsError::MathOverflow)?
+        } else {
+            config.roll_timeout_slots
+        };
+        let timeout_reference_slot = if game.state == GameState::Rolling {
+            game.last_roll_slot
+        } else {
+            game.last_action_slot
+        };
+        require!(
+            game.state == GameState::ReadyToRoll
+                || game.state == GameState::PointEstablished
+                || game.state == GameState::Rolling,
+            CrapsError::InvalidState
+        );
+        require!(clock.slot > timeout_reference_slot.saturating_add(timeout_window), CrapsError::RollWindowActive);
         settle_game(game, config, false)?;
         game.last_action_slot = clock.slot;
         Ok(())
@@ -256,7 +285,16 @@ pub mod solana_street_craps {
 
     pub fn claim_payout(ctx: Context<ClaimPayout>) -> Result<()> {
         let game = &mut ctx.accounts.game;
+        let config = &ctx.accounts.config;
         require!(game.state == GameState::Settled, CrapsError::InvalidState);
+
+        if ctx.accounts.claimer.key() == config.treasury {
+            require!(!game.treasury_claimed, CrapsError::AlreadyClaimed);
+            let treasury_payout = game.treasury_payout;
+            game.treasury_claimed = true;
+            payout_from_game(game, treasury_payout, &ctx.accounts.claimer.to_account_info())?;
+            return Ok(());
+        }
 
         if ctx.accounts.claimer.key() == game.shooter {
             require!(!game.shooter_claimed, CrapsError::AlreadyClaimed);
@@ -284,6 +322,7 @@ pub mod solana_street_craps {
 
         if game.state == GameState::Settled {
             require!(game.shooter_claimed, CrapsError::OutstandingClaims);
+            require!(game.treasury_claimed, CrapsError::OutstandingClaims);
             for i in 0..game.fader_count as usize {
                 if game.fader_payouts[i] > 0 {
                     require!(game.fader_claimed[i], CrapsError::OutstandingClaims);
@@ -306,26 +345,25 @@ pub mod solana_street_craps {
 }
 
 fn settle_game(game: &mut Account<Game>, config: &Account<Config>, shooter_wins: bool) -> Result<()> {
-    let tax = if shooter_wins {
-        0
-    } else {
-        game
-            .total_pot
-            .checked_mul(config.tax_bps as u64)
-            .ok_or(CrapsError::MathOverflow)?
-            .checked_div(BPS_DENOMINATOR)
-            .ok_or(CrapsError::MathOverflow)?
-    };
+    let tax = game
+        .total_pot
+        .checked_mul(config.tax_bps as u64)
+        .ok_or(CrapsError::MathOverflow)?
+        .checked_div(BPS_DENOMINATOR)
+        .ok_or(CrapsError::MathOverflow)?;
 
     game.tax_amount = tax;
+    game.treasury_payout = tax;
+    game.treasury_claimed = tax == 0;
     game.winner_is_shooter = shooter_wins;
     game.state = GameState::Settled;
 
+    for i in 0..game.fader_count as usize {
+        game.fader_payouts[i] = 0;
+    }
+
     if shooter_wins {
-        game.shooter_payout = game.total_pot;
-        for i in 0..game.fader_count as usize {
-            game.fader_payouts[i] = 0;
-        }
+        game.shooter_payout = game.total_pot.checked_sub(tax).ok_or(CrapsError::MathOverflow)?;
         return Ok(());
     }
 
@@ -357,18 +395,19 @@ fn settle_game(game: &mut Account<Game>, config: &Account<Config>, shooter_wins:
         allocated = allocated.checked_add(payout).ok_or(CrapsError::MathOverflow)?;
     }
 
-    let _remainder = distributable.checked_sub(allocated).ok_or(CrapsError::MathOverflow)?;
+    let remainder = distributable.checked_sub(allocated).ok_or(CrapsError::MathOverflow)?;
+    game.treasury_payout = game.treasury_payout.checked_add(remainder).ok_or(CrapsError::MathOverflow)?;
     game.shooter_payout = 0;
     Ok(())
 }
 
 
 fn sample_uniform_sum_2_to_12(random_word: u64) -> Result<u64> {
-    let upper = u64::MAX - (u64::MAX % 11);
+    let upper = u64::MAX - (u64::MAX % CRAPS_OUTCOME_COUNT);
     if random_word >= upper {
         return err!(CrapsError::RandomnessRejected);
     }
-    let value = random_word % 11;
+    let value = random_word % CRAPS_OUTCOME_COUNT;
     Ok(value + 2)
 }
 
@@ -586,6 +625,7 @@ pub struct Config {
     pub treasury: Pubkey,
     pub tax_bps: u16,
     pub max_faders: u8,
+    pub min_fader_stake: u64,
     pub frozen: bool,
     pub join_timeout_slots: u64,
     pub roll_timeout_slots: u64,
@@ -616,6 +656,8 @@ pub struct Game {
     pub fader_claimed: [bool; MAX_FADERS],
     pub shooter_payout: u64,
     pub shooter_claimed: bool,
+    pub treasury_payout: u64,
+    pub treasury_claimed: bool,
 }
 
 impl Game {
@@ -675,6 +717,8 @@ pub enum CrapsError {
     InvalidTimeout,
     #[msg("Invalid max faders")]
     InvalidMaxFaders,
+    #[msg("Fader stake is below minimum")]
+    StakeTooSmall,
     #[msg("Shooter cannot be a fader")]
     ShooterCannotFade,
     #[msg("Invalid randomness program")]
